@@ -112,6 +112,7 @@ impl State {
                 self.transactions.insert(tx.id, tx);
             }
             EntryType::Withdrawal => {
+                ensure!(!acc.locked, "Locked accounts can't withdraw");
                 let res = acc.available - amount;
                 if res < Value::zero() {
                     tx.state = EntryState::Failed;
