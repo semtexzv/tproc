@@ -69,14 +69,51 @@ impl State {
             TxType::Deposit => {
                 let amount = amount?;
                 acc.available += amount;
+                self.transactions.insert(tx.id, tx);
             }
-            TxType::Withdrawal => {}
-            TxType::Dispute => {}
-            TxType::Resolve => {}
-            TxType::Chargeback => {}
+            TxType::Withdrawal => {
+                let amount = amount?;
+                let res = acc.available - amount;
+                if res < 0.0 {
+                    bail!("Invalid withdrawal, not enough funds");
+                }
+                acc.available -= amount;
+                self.transactions.insert(tx.id, tx);
+            }
+            TxType::Dispute => {
+                let actual = self.transactions.get_mut(&tx.id);
+                let actual = actual.ok_or_else(|| Error::msg("Tx not found"))?;
+                ensure!(actual.client == tx.client, "Dispute referencing tx of different client");
+                let amount = actual.amount.ok_or_else(|| Error::msg("Missing amount"))?;
+
+                acc.held += amount;
+                acc.available -= amount;
+            }
+            TxType::Resolve => {
+                let actual = self.transactions.get_mut(&tx.id);
+                let actual = actual.ok_or_else(|| Error::msg("Tx not found"))?;
+                ensure!(actual.client == tx.client, "Resolve referencing tx of different client");
+                let amount = actual.amount.ok_or_else(|| Error::msg("Missing amount"))?;
+
+                ensure!(acc.held > amount, "Client held funds missing");
+
+                acc.held -= amount;
+                acc.available += amount;
+            }
+            TxType::Chargeback => {
+                let actual = self.transactions.get_mut(&tx.id);
+                let actual = actual.ok_or_else(|| Error::msg("Tx not found"))?;
+                ensure!(actual.client == tx.client, "Chargeback referencing tx of different client");
+                let amount = actual.amount.ok_or_else(|| Error::msg("Missing amount"))?;
+
+                ensure!(acc.held > amount, "Client held funds missing");
+                acc.held -= amount;
+                acc.locked = true;
+            }
         }
         Ok(())
     }
+
     pub fn write(&self, w: impl Write) -> Result<()> {
         // Different fields than our inner account repr,
         #[derive(Serialize)]
