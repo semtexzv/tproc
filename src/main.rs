@@ -8,12 +8,11 @@ use rust_decimal::prelude::Zero;
 
 // Use serde to parse entries,
 // Apply to mutable state
-// Keep only withdrawals + deposits for chargebacks etcs
+// Keep only withdrawals + deposits for chargebacks etc
 // Preserve transaction state for preventing double chargebacks
 // Allow accounts to go to negative value in order to allow multiple disputes
 
-// Use f32 for value for now, later replace with decimal representation
-// in order to avoid rounding errors
+// By using decimal we avoid floating point errors, which would accumulate
 pub type Value = rust_decimal::Decimal;
 
 #[derive(Debug, Deserialize, PartialOrd, PartialEq)]
@@ -109,6 +108,7 @@ impl State {
                 acc.available += amount;
 
                 tx.state = EntryState::Processed;
+                // Ignore the case when transaction id already exists, spec assumes unique transaction ids
                 self.transactions.insert(tx.id, tx);
             }
             EntryType::Withdrawal => {
