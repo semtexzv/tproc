@@ -4,6 +4,7 @@ use std::env::args;
 use anyhow::*;
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use rust_decimal::prelude::Zero;
 
 // Use serde to parse entries,
 // Apply to mutable state
@@ -13,7 +14,7 @@ use std::io::{Read, Write};
 
 // Use f32 for value for now, later replace with decimal representation
 // in order to avoid rounding errors
-pub type Value = f64;
+pub type Value = rust_decimal::Decimal;
 
 #[derive(Debug, Deserialize, PartialOrd, PartialEq)]
 pub enum EntryType {
@@ -111,7 +112,7 @@ impl State {
             }
             EntryType::Withdrawal => {
                 let res = acc.available - amount;
-                if res < 0.0 {
+                if res < Value::zero() {
                     tx.state = EntryState::Failed;
                     bail!("Invalid withdrawal, not enough funds");
                 } else {
@@ -175,9 +176,9 @@ impl State {
         #[derive(Serialize)]
         struct AccountOut {
             client: u16,
-            available: f64,
-            held: f64,
-            total: f64,
+            available: Value,
+            held: Value,
+            total: Value,
             locked: bool,
         }
         let mut writer = csv::Writer::from_writer(w);

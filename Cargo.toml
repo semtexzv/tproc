@@ -8,3 +8,5 @@ edition = "2018"
 serde = { version = "1.0.117", features = ["derive"] }
 anyhow = "1.0.34"
 csv = "1.1.4"
+
+rust_decimal = { version = "1.8.1", features = ["serde-float"] }
