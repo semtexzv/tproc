@@ -29,6 +29,15 @@ pub enum TxType {
     Chargeback,
 }
 
+impl TxType {
+    pub fn is_tx(&self) -> bool {
+        self == &TxType::Deposit || self == &TxType::Withdrawal
+    }
+    pub fn is_op(&self) -> bool {
+        self != &TxType::Deposit && self != &TxType::Withdrawal
+    }
+}
+
 // Would've used a internally tagged enum, but serde csv doesn't like it
 // https://serde.rs/enum-representations.html
 #[derive(Debug, Deserialize)]
@@ -58,21 +67,23 @@ pub struct State {
 
 impl State {
     pub fn apply(&mut self, tx: Tx) -> Result<()> {
+        if tx.t.is_tx() {
+            self.apply_tx(tx)
+        } else {
+            self.apply_op(tx)
+        }
+    }
+    pub fn apply_tx(&mut self, tx: Tx) -> Result<()> {
         let acc = self.accounts
             .entry(tx.client)
             .or_insert_with(|| Default::default());
-
-        // Map to an error, unwrap later
-        let amount = tx.amount.ok_or(Error::msg("Expected amount associated"));
-
+        let amount = tx.amount.ok_or(Error::msg("Expected amount associated"))?;
         match tx.t {
             TxType::Deposit => {
-                let amount = amount?;
                 acc.available += amount;
                 self.transactions.insert(tx.id, tx);
             }
             TxType::Withdrawal => {
-                let amount = amount?;
                 let res = acc.available - amount;
                 if res < 0.0 {
                     bail!("Invalid withdrawal, not enough funds");
@@ -80,39 +91,41 @@ impl State {
                 acc.available -= amount;
                 self.transactions.insert(tx.id, tx);
             }
-            TxType::Dispute => {
-                let actual = self.transactions.get_mut(&tx.id);
-                let actual = actual.ok_or_else(|| Error::msg("Tx not found"))?;
-                ensure!(actual.client == tx.client, "Dispute referencing tx of different client");
-                let amount = actual.amount.ok_or_else(|| Error::msg("Missing amount"))?;
+            other => bail!("Invalid transaction: {:?}", other)
+        }
+        Ok(())
+    }
 
+    pub fn apply_op(&mut self, op: Tx) -> Result<()> {
+
+        let actual = self.transactions.get_mut(&op.id);
+        let actual = actual.ok_or_else(|| Error::msg("Tx not found"))?;
+        ensure!(actual.client == op.client, "Operation referencing tx of different client");
+        let acc = self.accounts.get_mut(&op.client)
+            .ok_or_else(|| Error::msg("Client missing"))?;
+        let amount = actual.amount.ok_or_else(|| Error::msg("Missing amount"))?;
+
+        match &op.t {
+            TxType::Dispute => {
                 acc.held += amount;
                 acc.available -= amount;
             }
             TxType::Resolve => {
-                let actual = self.transactions.get_mut(&tx.id);
-                let actual = actual.ok_or_else(|| Error::msg("Tx not found"))?;
-                ensure!(actual.client == tx.client, "Resolve referencing tx of different client");
-                let amount = actual.amount.ok_or_else(|| Error::msg("Missing amount"))?;
-
                 ensure!(acc.held > amount, "Client held funds missing");
 
                 acc.held -= amount;
                 acc.available += amount;
             }
             TxType::Chargeback => {
-                let actual = self.transactions.get_mut(&tx.id);
-                let actual = actual.ok_or_else(|| Error::msg("Tx not found"))?;
-                ensure!(actual.client == tx.client, "Chargeback referencing tx of different client");
-                let amount = actual.amount.ok_or_else(|| Error::msg("Missing amount"))?;
-
                 ensure!(acc.held > amount, "Client held funds missing");
                 acc.held -= amount;
                 acc.locked = true;
             }
+            _ => bail!("Invalid operation {:?}", op),
         }
         Ok(())
     }
+
 
     pub fn write(&self, w: impl Write) -> Result<()> {
         // Different fields than our inner account repr,
