@@ -3,7 +3,7 @@ use std::env::args;
 
 use anyhow::*;
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{Read, Write};
 
 // Use serde to parse entries,
 // Apply to mutable state
@@ -29,6 +29,8 @@ pub enum TxType {
     Chargeback,
 }
 
+// Would've used a internally tagged enum, but serde csv doesn't like it
+// https://serde.rs/enum-representations.html
 #[derive(Debug, Deserialize)]
 pub struct Tx {
     #[serde(rename = "type")]
@@ -56,12 +58,44 @@ pub struct State {
 
 impl State {
     pub fn apply(&mut self, tx: Tx) -> Result<()> {
+        let acc = self.accounts
+            .entry(tx.client)
+            .or_insert_with(|| Default::default());
+
+        // Map to an error, unwrap later
+        let amount = tx.amount.ok_or(Error::msg("Expected amount associated"));
+
         match tx.t {
-            TxType::Deposit => {}
+            TxType::Deposit => {
+                let amount = amount?;
+                acc.available += amount;
+            }
             TxType::Withdrawal => {}
             TxType::Dispute => {}
             TxType::Resolve => {}
             TxType::Chargeback => {}
+        }
+        Ok(())
+    }
+    pub fn write(&self, w: impl Write) -> Result<()> {
+        // Different fields than our inner account repr,
+        #[derive(Serialize)]
+        struct AccountOut {
+            client: u16,
+            available: f64,
+            held: f64,
+            total: f64,
+            locked: bool,
+        }
+        let mut writer = csv::Writer::from_writer(w);
+        for (id, acc) in &self.accounts {
+            writer.serialize(&AccountOut {
+                client: *id,
+                available: acc.available,
+                held: acc.held,
+                total: acc.available + acc.held,
+                locked: acc.locked,
+            })?;
         }
         Ok(())
     }
@@ -79,7 +113,9 @@ pub fn process_stream(r: impl Read) -> Result<State> {
 
     for tx in rdr.deserialize() {
         let tx: Tx = tx?;
-        state.apply(tx)
+        if let Err(e) = state.apply(tx) {
+            eprintln!("Error: {}", e);
+        }
     }
 
     Ok(state)
@@ -91,7 +127,6 @@ fn main() -> Result<()> {
     ensure!(args.len() > 1, "Missing input file argument");
     let ifile = std::fs::File::open(&args[1])?;
     let state = process_stream(ifile)?;
-
-    println!("State: {:?}", state);
+    state.write(std::io::stdout())?;
     Ok(())
 }
