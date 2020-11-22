@@ -88,6 +88,7 @@ pub struct State {
 }
 
 impl State {
+    /// Apply an entry from the input
     pub fn apply(&mut self, tx: Entry) -> Result<()> {
         if tx.typ.is_tx() {
             self.apply_tx(tx)
